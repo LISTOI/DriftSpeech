@@ -77,18 +77,9 @@ def evaluate(
         loss_sums = [0 for _ in range(4)]
     loss_means = [loss_sum / len(dataset) for loss_sum in loss_sums]
 
-    if len(loss_means) > 9:
-        message = "Validation Step {}, Total Loss: {:.4f}, Mel Loss: {:.4f}, Mel PostNet Loss: {:.4f}, Duration Loss: {:.4f}, Phoneme Adv Loss: {:.4f}, VQ Loss: {:.4f}, VQ Commitment Loss: {:.4f}, VQ Codebook Loss: {:.4f}, Codebook Perplexity: {:.4f}, Used Codes: {:.1f}".format(
-            *([step] + [l for l in loss_means])
-        )
-    elif len(loss_means) > 4:
-        message = "Validation Step {}, Total Loss: {:.4f}, Mel Loss: {:.4f}, Mel PostNet Loss: {:.4f}, Duration Loss: {:.4f}, Phoneme Adv Loss: {:.4f}".format(
-            *([step] + [l for l in loss_means])
-        )
-    else:
-        message = "Validation Step {}, Total Loss: {:.4f}, Mel Loss: {:.4f}, Mel PostNet Loss: {:.4f}, Duration Loss: {:.4f}".format(
-            *([step] + [l for l in loss_means])
-        )
+    message = "Validation Step {}, Total Loss: {:.4f}, Flow Mel Loss: {:.4f}, Duration Loss: {:.4f}".format(
+        *([step] + [l for l in loss_means])
+    )
 
     if logger is not None:
         log(logger, step, losses=loss_means)

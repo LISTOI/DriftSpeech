@@ -66,6 +66,8 @@ def get_model(args, configs, device, train=False):
     (preprocess_config, model_config, train_config) = configs
 
     model = FastSpeech2(preprocess_config, model_config).to(device)
+    if hasattr(model, "set_train_config"):
+        model.set_train_config(train_config)
     if args.restore_step:
         ckpt_path = os.path.join(
             train_config["path"]["ckpt_path"],

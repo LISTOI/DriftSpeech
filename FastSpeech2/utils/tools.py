@@ -67,23 +67,9 @@ def log(
     if losses is not None:
         logger.add_scalar("Loss/total_loss", losses[0], step)
         if len(losses) > 1:
-            logger.add_scalar("Loss/mel_loss", losses[1], step)
+            logger.add_scalar("Loss/flow_mel_loss", losses[1], step)
         if len(losses) > 2:
-            logger.add_scalar("Loss/mel_postnet_loss", losses[2], step)
-        if len(losses) > 3:
-            logger.add_scalar("Loss/duration_loss", losses[3], step)
-        if len(losses) > 4:
-            logger.add_scalar("Loss/phoneme_adv_loss", losses[4], step)
-        if len(losses) > 5:
-            logger.add_scalar("Loss/vq_loss", losses[5], step)
-        if len(losses) > 6:
-            logger.add_scalar("Loss/vq_commitment_loss", losses[6], step)
-        if len(losses) > 7:
-            logger.add_scalar("Loss/vq_codebook_loss", losses[7], step)
-        if len(losses) > 8:
-            logger.add_scalar("VQ/codebook_perplexity", losses[8], step)
-        if len(losses) > 9:
-            logger.add_scalar("VQ/used_code_count", losses[9], step)
+            logger.add_scalar("Loss/duration_loss", losses[2], step)
 
     if fig is not None:
         logger.add_figure(tag, fig, global_step=step)
@@ -153,7 +139,7 @@ def synth_one_sample(targets, predictions, vocoder, model_config, preprocess_con
 def synth_samples(targets, predictions, vocoder, model_config, preprocess_config, path):
 
     basenames = targets[0]
-    mel_lens = predictions[6]
+    mel_lens = predictions[7]
     for i in range(len(predictions[0])):
         basename = basenames[i]
         mel_len = mel_lens[i].item()

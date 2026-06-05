@@ -8,11 +8,14 @@ logging:
   log_audio: true
   log_figure: true
 stylecode_logging:
-  enabled: true
+  enabled: false
   num_samples: 128
   dir_name: "stylecode"
   include_token_ids: true
   include_phoneme_text: true
+mel_flow:
+  sample_steps: 32
+  guidance_scale: 1.5
 optimizer:
   batch_size: 48
   betas: [0.9, 0.98]
