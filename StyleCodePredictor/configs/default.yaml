@@ -1,0 +1,54 @@
+data:
+  train_jsonl:
+    - /home/listoi/Speech/FastSpeech2/output/result/LJSpeech/stylecode/900000.jsonl
+  val_jsonl: []
+  require_token_ids: true
+  pad_token_id: 0
+  mask_zero_duration: true
+  normalize_stylecodes: true
+  stats_path: null
+  num_workers: 2
+
+model:
+  vocab_size: 512
+  style_dim: 32
+  max_seq_len: 1000
+
+  text_encoder:
+    hidden_dim: 256
+    num_layers: 4
+    num_heads: 2
+    ffn_dim: 1024
+    dropout: 0.2
+    conv_kernel_size: 9
+
+  dit:
+    hidden_dim: 256
+    depth: 8
+    num_heads: 4
+    mlp_ratio: 4
+    dropout: 0.1
+    time_embed_dim: 256
+
+flow:
+  prediction_type: velocity
+  t_min: 0.0
+  t_max: 1.0
+  noise_scale: 1.0
+
+train:
+  seed: 1234
+  batch_size: 32
+  epochs: 200
+  lr: 0.0001
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  amp: true
+  log_interval: 50
+  val_interval: 1000
+  save_interval: 5000
+  output_dir: /home/listoi/Speech/StyleCodePredictor/runs/default
+
+inference:
+  num_steps: 32
+  sampler: euler

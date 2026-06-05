@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Environments and local config
+.env
+.env.*
+.venv/
+venv/
+env/
+*.local
+
+# Logs
+*.log
+logs/
+log/
+
+# Training outputs and generated artifacts
+output/
+outputs/
+runs/
+results/
+result/
+checkpoints/
+ckpt/
+*.ckpt
+*.pth
+*.pth.tar
+*.pt
+*.onnx
+
+# FastSpeech2 generated directories
+FastSpeech2/output/
+FastSpeech2/log/
+FastSpeech2/result/
+FastSpeech2/ckpt/
+FastSpeech2/hifigan/*.pth.tar
+FastSpeech2/LJSpeech-1.1/
+FastSpeech2/preprocessed_data/
+FastSpeech2/raw_data/
+
+# StyleCodePredictor generated directories
+StyleCodePredictor/runs/
+
+# Evaluation generated outputs
+stylecoode/evaluate/eval_results/
+
+# Data archives and media
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.wav
+*.mp3
+*.flac
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude local state
+.claude/
