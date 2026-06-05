@@ -40,8 +40,9 @@ mel_flow:
   depth: 6
   num_heads: 4
   dropout: 0.1
-  conv_smoother_layers: 2
-  conv_smoother_kernel_size: 5
+  conv_smoother_layers: 4
+  conv_smoother_kernel_size: 7
+  conv_smoother_expansion: 4
   time_embed_dim: 256
   noise_scale: 1.0
   prediction_type: velocity

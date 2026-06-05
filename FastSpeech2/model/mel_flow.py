@@ -52,29 +52,74 @@ class AdaLayerNorm(nn.Module):
         return self.norm(x) * (1 + scale[:, None, :]) + shift[:, None, :]
 
 
-class FrameConditionSmoother(nn.Module):
-    def __init__(self, hidden_dim, layers=2, kernel_size=5, dropout=0.1):
+class GlobalResponseNorm1D(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.zeros(1, 1, dim))
+        self.beta = nn.Parameter(torch.zeros(1, 1, dim))
+        self.eps = eps
+
+    def forward(self, x):
+        gx = torch.norm(x, p=2, dim=1, keepdim=True)
+        nx = gx / (gx.mean(dim=-1, keepdim=True) + self.eps)
+        return self.gamma * (x * nx) + self.beta + x
+
+
+class ConvNeXtV2Block1D(nn.Module):
+    def __init__(self, hidden_dim, kernel_size=7, expansion=4, dropout=0.1):
         super().__init__()
         padding = (kernel_size - 1) // 2
-        blocks = []
-        for _ in range(layers):
-            blocks.extend(
-                [
-                    nn.Conv1d(hidden_dim, hidden_dim, kernel_size, padding=padding),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                ]
-            )
-        self.net = nn.Sequential(*blocks)
+        inner_dim = hidden_dim * expansion
+        self.dwconv = nn.Conv1d(
+            hidden_dim,
+            hidden_dim,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=hidden_dim,
+        )
         self.norm = nn.LayerNorm(hidden_dim)
+        self.pwconv1 = nn.Linear(hidden_dim, inner_dim)
+        self.act = nn.GELU()
+        self.grn = GlobalResponseNorm1D(inner_dim)
+        self.pwconv2 = nn.Linear(inner_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, padding_mask=None):
         residual = x
-        out = self.net(x.transpose(1, 2)).transpose(1, 2)
-        out = self.norm(out + residual)
+        x = self.dwconv(x.transpose(1, 2)).transpose(1, 2)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.grn(x)
+        x = self.pwconv2(x)
+        x = self.dropout(x)
+        x = residual + x
         if padding_mask is not None:
-            out = out.masked_fill(padding_mask.unsqueeze(-1), 0.0)
-        return out
+            x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+        return x
+
+
+class FrameConditionSmoother(nn.Module):
+    def __init__(self, hidden_dim, layers=4, kernel_size=7, dropout=0.1, expansion=4):
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            [
+                ConvNeXtV2Block1D(
+                    hidden_dim,
+                    kernel_size=kernel_size,
+                    expansion=expansion,
+                    dropout=dropout,
+                )
+                for _ in range(layers)
+            ]
+        )
+
+    def forward(self, x, padding_mask=None):
+        if padding_mask is not None:
+            x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+        for block in self.blocks:
+            x = block(x, padding_mask=padding_mask)
+        return x
 
 
 class MelFlowBlock(nn.Module):

@@ -28,9 +28,10 @@ class FastSpeech2(nn.Module):
         self.length_regulator = LengthRegulator()
         self.condition_smoother = FrameConditionSmoother(
             hidden_dim,
-            layers=mel_flow_config.get("conv_smoother_layers", 2),
-            kernel_size=mel_flow_config.get("conv_smoother_kernel_size", 5),
+            layers=mel_flow_config.get("conv_smoother_layers", 4),
+            kernel_size=mel_flow_config.get("conv_smoother_kernel_size", 7),
             dropout=mel_flow_config.get("dropout", 0.1),
+            expansion=mel_flow_config.get("conv_smoother_expansion", 4),
         )
         self.mel_flow = MelFlowGenerator(
             preprocess_config["preprocessing"]["mel"]["n_mel_channels"],
