@@ -14,7 +14,6 @@ from scipy.io import wavfile
 from torch.utils.data import DataLoader
 
 from dataset import Dataset
-from evaluate import forward_model
 from utils.model import get_model, get_vocoder, move_vocoder, vocoder_infer
 from utils.tools import plot_mel, to_device
 
@@ -181,6 +180,19 @@ def build_loader(preprocess_config, train_config, max_samples):
     return dataset, loader
 
 
+def sample_with_gt_duration(model, batch):
+    return model(
+        speakers=batch[2],
+        texts=batch[3],
+        src_lens=batch[4],
+        max_src_len=batch[5],
+        mels=None,
+        mel_lens=batch[7],
+        max_mel_len=batch[8],
+        d_targets=batch[9],
+    )
+
+
 def evaluate_combination(
     model,
     loader,
@@ -221,7 +233,7 @@ def evaluate_combination(
         for batchs in loader:
             for batch in batchs:
                 batch = to_device(batch, device)
-                output = forward_model(model, batch)
+                output = sample_with_gt_duration(model, batch)
                 mel_predictions = output[0]
                 mel_targets = batch[6][:, : mel_predictions.shape[1], :]
                 mel_lens = batch[7]
@@ -379,10 +391,10 @@ def parse_args():
     parser.add_argument("--save_samples", type=int, default=10)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--save_wav", action="store_true", help="Save generated/GT wavs with the configured vocoder")
-    parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("-p", "--preprocess_config", type=str, required=True)
-    parser.add_argument("-m", "--model_config", type=str, required=True)
-    parser.add_argument("-t", "--train_config", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="")
+    parser.add_argument("-p", "--preprocess_config", type=str, default="")
+    parser.add_argument("-m", "--model_config", type=str, default="")
+    parser.add_argument("-t", "--train_config", type=str, default="")
     return parser.parse_args()
 
 
@@ -391,6 +403,17 @@ if __name__ == "__main__":
     if parsed_args.self_test:
         self_test()
     else:
+        missing = []
         if not parsed_args.restore_steps:
-            raise SystemExit("--restore_steps is required unless --self_test is set")
+            missing.append("--restore_steps")
+        if not parsed_args.output_dir:
+            missing.append("--output_dir")
+        if not parsed_args.preprocess_config:
+            missing.append("--preprocess_config")
+        if not parsed_args.model_config:
+            missing.append("--model_config")
+        if not parsed_args.train_config:
+            missing.append("--train_config")
+        if missing:
+            raise SystemExit("Missing required arguments: {}".format(", ".join(missing)))
         run(parsed_args)
