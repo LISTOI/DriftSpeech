@@ -76,6 +76,24 @@ Covers:
 - task breakdown;
 - static check and smoke test plan.
 
+### `FastSpeech2/evaluate_flow_mel.py`
+
+GT-duration flow-mel evaluation sweep script.
+
+Main capabilities:
+
+- compares multiple checkpoints;
+- sweeps CFG guidance scale;
+- sweeps Euler sample steps;
+- uses validation-set GT duration for all generations;
+- computes frame-aligned mel metrics;
+- saves `summary.csv`, `summary.json`, and `best.json`;
+- optionally saves generated/GT mel PNG and wav samples.
+
+### `docs/superpowers/plans/2026-06-11-flow-mel-evaluation-sweep.md`
+
+Implementation plan for the GT-duration flow-mel evaluation sweep script.
+
 ## Modified model files
 
 ### `FastSpeech2/model/fastspeech2.py`
@@ -276,6 +294,57 @@ text encoder
 ```
 
 The experiment branch does not use stylecode extraction in the model forward path.
+
+## Flow-mel evaluation mechanism
+
+The branch now includes a GT-duration sweep script:
+
+```bash
+conda run -n torch_gpu python evaluate_flow_mel.py \
+  --restore_steps 100000,200000,300000 \
+  --guidance_scales 1.0,1.5,2.0 \
+  --sample_steps 16,32,64 \
+  --max_samples 50 \
+  --save_samples 10 \
+  --save_wav \
+  --output_dir output/result/LJSpeech_flow_mel_baseline/eval_sweep \
+  -p config/LJSpeech/preprocess.yaml \
+  -m config/LJSpeech/model.yaml \
+  -t config/LJSpeech/train.yaml
+```
+
+Evaluation protocol:
+
+```text
+validation text + GT MFA duration
+-> flow sampler
+-> generated mel
+-> compare against GT mel over valid frames
+```
+
+Metrics:
+
+```text
+mel_l1
+mel_mse
+mel_rmse
+mel_mean_abs_diff
+mel_std_abs_diff
+```
+
+Automatic ranking score:
+
+```text
+score = mel_l1_mean + 0.1 * mel_std_abs_diff_mean
+```
+
+The automatic best combination is written to:
+
+```text
+best.json
+```
+
+The ranking is intended for candidate selection. Final model choice should still be confirmed by listening to the saved generated wav samples.
 
 ## Verification performed
 
