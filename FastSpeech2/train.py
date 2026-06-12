@@ -25,7 +25,7 @@ def dump_stylecodes(model, val_loader, val_dataset, device, train_config, step):
     if not config.get("enabled", True):
         return
     fs2_model = model.module if hasattr(model, "module") else model
-    if hasattr(fs2_model, "mel_flow"):
+    if not hasattr(fs2_model, "style_extractor"):
         return
 
     num_samples = min(config.get("num_samples", 128), len(val_dataset))
@@ -188,9 +188,18 @@ def main(args, configs):
                     if step % log_step == 0:
                         loss_values = [l.item() for l in losses]
                         message1 = "Step {}/{}, ".format(step, total_step)
-                        message2 = "Total Loss: {:.4f}, Flow Mel Loss: {:.4f}, Duration Loss: {:.4f}".format(
-                            *loss_values
-                        )
+                        if len(loss_values) > 8:
+                            message2 = "Total Loss: {:.4f}, Flow Mel Loss: {:.4f}, Duration Loss: {:.4f}, Phoneme Adv Loss: {:.4f}, VQ Loss: {:.4f}, VQ Commitment Loss: {:.4f}, VQ Codebook Loss: {:.4f}, Codebook Perplexity: {:.4f}, Used Codes: {:.1f}".format(
+                                *loss_values
+                            )
+                        elif len(loss_values) > 3:
+                            message2 = "Total Loss: {:.4f}, Flow Mel Loss: {:.4f}, Duration Loss: {:.4f}, Phoneme Adv Loss: {:.4f}".format(
+                                *loss_values
+                            )
+                        else:
+                            message2 = "Total Loss: {:.4f}, Flow Mel Loss: {:.4f}, Duration Loss: {:.4f}".format(
+                                *loss_values
+                            )
 
                         with open(os.path.join(train_log_path, "log.txt"), "a") as f:
                             f.write(message1 + message2 + "\n")

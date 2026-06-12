@@ -70,6 +70,18 @@ def log(
             logger.add_scalar("Loss/flow_mel_loss", losses[1], step)
         if len(losses) > 2:
             logger.add_scalar("Loss/duration_loss", losses[2], step)
+        if len(losses) > 3:
+            logger.add_scalar("Loss/phoneme_adv_loss", losses[3], step)
+        if len(losses) > 4:
+            logger.add_scalar("Loss/vq_loss", losses[4], step)
+        if len(losses) > 5:
+            logger.add_scalar("Loss/vq_commitment_loss", losses[5], step)
+        if len(losses) > 6:
+            logger.add_scalar("Loss/vq_codebook_loss", losses[6], step)
+        if len(losses) > 7:
+            logger.add_scalar("VQ/codebook_perplexity", losses[7], step)
+        if len(losses) > 8:
+            logger.add_scalar("VQ/used_code_count", losses[8], step)
 
     if fig is not None:
         logger.add_figure(tag, fig, global_step=step)

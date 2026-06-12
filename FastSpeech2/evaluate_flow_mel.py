@@ -186,10 +186,11 @@ def sample_with_gt_duration(model, batch):
         texts=batch[3],
         src_lens=batch[4],
         max_src_len=batch[5],
-        mels=None,
+        mels=batch[6],
         mel_lens=batch[7],
         max_mel_len=batch[8],
         d_targets=batch[9],
+        force_sampling=True,
     )
 
 

@@ -1,14 +1,14 @@
 path:
-  ckpt_path: "./output/ckpt/LJSpeech"
-  log_path: "./output/log/LJSpeech"
-  result_path: "./output/result/LJSpeech"
+  ckpt_path: "./output/ckpt/LJSpeech_flow_stylecode_adv"
+  log_path: "./output/log/LJSpeech_flow_stylecode_adv"
+  result_path: "./output/result/LJSpeech_flow_stylecode_adv"
 data:
   group_size: 4
 logging:
   log_audio: true
   log_figure: true
 stylecode_logging:
-  enabled: false
+  enabled: true
   num_samples: 128
   dir_name: "stylecode"
   include_token_ids: true

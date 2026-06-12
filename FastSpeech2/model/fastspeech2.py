@@ -7,11 +7,12 @@ import torch.nn as nn
 from transformer import Encoder
 from .mel_flow import FrameConditionSmoother, MelFlowGenerator
 from .modules import DurationPredictor, LengthRegulator
+from .style_extractor import PhonemeStyleExtractor
 from utils.tools import get_mask_from_lengths
 
 
 class FastSpeech2(nn.Module):
-    """FastSpeech2 text encoder with a flow-matching mel generator."""
+    """FastSpeech2 text encoder with stylecode-conditioned flow mel generation."""
 
     def __init__(self, preprocess_config, model_config):
         super(FastSpeech2, self).__init__()
@@ -25,6 +26,7 @@ class FastSpeech2(nn.Module):
 
         self.encoder = Encoder(model_config)
         self.duration_predictor = DurationPredictor(model_config)
+        self.style_extractor = PhonemeStyleExtractor(preprocess_config, model_config)
         self.length_regulator = LengthRegulator()
         self.condition_smoother = FrameConditionSmoother(
             hidden_dim,
@@ -70,6 +72,26 @@ class FastSpeech2(nn.Module):
             ] = 1
         return durations
 
+    def _build_style_hidden(self, mels, d_targets, src_lens, mel_lens, text_hidden):
+        style_adv_logits = None
+        style_info = None
+        if mels is None or d_targets is None:
+            return torch.zeros_like(text_hidden), style_adv_logits, style_info
+
+        stylecode, style_info = self.style_extractor.extract_stylecode_with_info(
+            mels,
+            d_targets,
+            src_lens=src_lens,
+            mel_lens=mel_lens,
+        )
+        style_adv_logits = self.style_extractor.classify_stylecode(stylecode)
+        style_hidden = self.style_extractor.decode_stylecode(
+            stylecode,
+            src_lens=src_lens,
+            duration_targets=d_targets,
+        )
+        return style_hidden, style_adv_logits, style_info
+
     def forward(
         self,
         speakers,
@@ -81,6 +103,7 @@ class FastSpeech2(nn.Module):
         max_mel_len=None,
         d_targets=None,
         d_control=1.0,
+        force_sampling=False,
     ):
         src_masks = get_mask_from_lengths(src_lens, max_src_len)
 
@@ -92,6 +115,14 @@ class FastSpeech2(nn.Module):
             )
 
         log_duration_predictions = self.duration_predictor(text_hidden, src_masks)
+        style_hidden, style_adv_logits, style_info = self._build_style_hidden(
+            mels,
+            d_targets,
+            src_lens,
+            mel_lens,
+            text_hidden,
+        )
+        phoneme_condition = text_hidden + style_hidden
 
         if d_targets is not None:
             durations_for_lr = d_targets
@@ -104,14 +135,14 @@ class FastSpeech2(nn.Module):
             max_mel_len = None
 
         frame_hidden, mel_lens = self.length_regulator(
-            text_hidden,
+            phoneme_condition,
             durations_for_lr,
             max_mel_len,
         )
         mel_masks = get_mask_from_lengths(mel_lens, frame_hidden.shape[1])
         frame_condition = self.condition_smoother(frame_hidden, mel_masks)
 
-        if mels is not None:
+        if mels is not None and not force_sampling:
             mel_targets = mels[:, : frame_condition.shape[1], :]
             v_pred, v_target, flow_info = self.mel_flow.training_step(
                 mel_targets,
@@ -146,4 +177,6 @@ class FastSpeech2(nn.Module):
             src_lens,
             mel_lens,
             flow_info,
+            style_adv_logits,
+            style_info,
         )
