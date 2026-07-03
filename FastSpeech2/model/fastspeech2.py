@@ -72,9 +72,19 @@ class FastSpeech2(nn.Module):
             ] = 1
         return durations
 
-    def _build_style_hidden(self, mels, d_targets, src_lens, mel_lens, text_hidden):
+    def _build_style_hidden(self, mels, d_targets, src_lens, mel_lens, text_hidden, stylecode_override=None):
         style_adv_logits = None
         style_info = None
+        if stylecode_override is not None:
+            if d_targets is None:
+                raise ValueError("d_targets are required when stylecode_override is provided")
+            style_hidden = self.style_extractor.decode_stylecode(
+                stylecode_override,
+                src_lens=src_lens,
+                duration_targets=d_targets,
+            )
+            style_info = {"source": "stylecode_override"}
+            return style_hidden, style_adv_logits, style_info
         if mels is None or d_targets is None:
             return torch.zeros_like(text_hidden), style_adv_logits, style_info
 
@@ -104,6 +114,7 @@ class FastSpeech2(nn.Module):
         d_targets=None,
         d_control=1.0,
         force_sampling=False,
+        stylecode_override=None,
     ):
         src_masks = get_mask_from_lengths(src_lens, max_src_len)
 
@@ -121,6 +132,7 @@ class FastSpeech2(nn.Module):
             src_lens,
             mel_lens,
             text_hidden,
+            stylecode_override=stylecode_override,
         )
         phoneme_condition = text_hidden + style_hidden
 

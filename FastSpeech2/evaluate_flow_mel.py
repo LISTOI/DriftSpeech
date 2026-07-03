@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import random
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -13,8 +14,6 @@ from matplotlib import pyplot as plt
 from scipy.io import wavfile
 from torch.utils.data import DataLoader
 
-from dataset import Dataset
-from utils.model import get_model, get_vocoder, move_vocoder, vocoder_infer
 from utils.tools import plot_mel, to_device
 
 
@@ -92,6 +91,31 @@ def write_json(path, data):
         f.write("\n")
 
 
+def lengths_to_padding_mask(lengths, max_len=None):
+    if max_len is None:
+        max_len = int(lengths.max().item()) if lengths.numel() > 0 else 0
+    positions = torch.arange(max_len, device=lengths.device).unsqueeze(0)
+    return positions >= lengths.long().unsqueeze(1)
+
+
+def denormalize_stylecode(stylecode, style_mean, style_std):
+    if style_mean is None or style_std is None:
+        return stylecode
+    return stylecode * style_std.to(stylecode.device)[None, None, :] + style_mean.to(stylecode.device)[None, None, :]
+
+
+def evaluation_protocol(style_predictor_checkpoint):
+    if style_predictor_checkpoint:
+        return "GT duration validation-set sampling with predicted stylecode from StyleCodePredictor; duration predictor error is intentionally excluded."
+    return "GT duration validation-set sampling with GT/reference stylecode extracted from ground-truth mel; duration predictor error is intentionally excluded."
+
+
+def style_predictor_batch_seed(base_seed, batch_index):
+    if base_seed is None:
+        return None
+    return int(base_seed) + int(batch_index)
+
+
 def write_csv(path, rows):
     fieldnames = [
         "restore_step",
@@ -110,6 +134,7 @@ def write_csv(path, rows):
         "mel_std_abs_diff_mean",
         "mel_std_abs_diff_std",
         "score",
+        "stylecode_source",
         "sample_dir",
     ]
     with open(path, "w", encoding="utf-8", newline="") as f:
@@ -134,6 +159,7 @@ def save_sample_artifacts(
     vocoder,
     model_config,
     preprocess_config,
+    vocoder_infer_fn,
 ):
     ensure_dir(sample_dir)
     mel_prediction = mel_prediction[:mel_len]
@@ -144,13 +170,13 @@ def save_sample_artifacts(
     if vocoder is None:
         return
 
-    prediction_audio = vocoder_infer(
+    prediction_audio = vocoder_infer_fn(
         mel_prediction.transpose(0, 1).unsqueeze(0),
         vocoder,
         model_config,
         preprocess_config,
     )[0]
-    target_audio = vocoder_infer(
+    target_audio = vocoder_infer_fn(
         mel_target.transpose(0, 1).unsqueeze(0),
         vocoder,
         model_config,
@@ -162,6 +188,8 @@ def save_sample_artifacts(
 
 
 def build_loader(preprocess_config, train_config, max_samples):
+    from dataset import Dataset
+
     eval_config = deepcopy(train_config)
     eval_config["optimizer"] = dict(eval_config["optimizer"])
     eval_config["optimizer"]["batch_size"] = min(eval_config["optimizer"].get("batch_size", 16), max(max_samples, 1))
@@ -180,17 +208,97 @@ def build_loader(preprocess_config, train_config, max_samples):
     return dataset, loader
 
 
-def sample_with_gt_duration(model, batch):
+def add_style_predictor_to_path(style_predictor_dir):
+    if not style_predictor_dir:
+        style_predictor_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "StyleCodePredictor"))
+    if style_predictor_dir not in sys.path:
+        sys.path.insert(0, style_predictor_dir)
+    return style_predictor_dir
+
+
+def load_style_predictor(checkpoint_path, style_predictor_dir, device):
+    if not checkpoint_path:
+        return None
+    add_style_predictor_to_path(style_predictor_dir)
+    from stylecode_predictor.checkpoint import load_checkpoint
+    from stylecode_predictor.model import build_model_from_config
+
+    ckpt = load_checkpoint(checkpoint_path, map_location=device)
+    config = ckpt["config"]
+    model = build_model_from_config(
+        config,
+        vocab_size=int(ckpt.get("vocab_size", config["model"]["vocab_size"])),
+        style_dim=int(ckpt.get("style_dim", config["model"]["style_dim"])),
+    ).to(device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    model.requires_grad_(False)
+    style_mean = ckpt.get("style_mean")
+    style_std = ckpt.get("style_std")
+    if style_mean is not None:
+        style_mean = style_mean.to(device)
+        style_std = style_std.to(device)
+    return {
+        "model": model,
+        "config": config,
+        "style_mean": style_mean,
+        "style_std": style_std,
+        "style_dim": int(ckpt.get("style_dim", config["model"]["style_dim"])),
+        "checkpoint": checkpoint_path,
+    }
+
+
+def predict_stylecode(style_predictor, batch, num_steps, seed=None):
+    if style_predictor is None:
+        return None
+    from stylecode_predictor.flow_matching import euler_sample
+
+    config = style_predictor["config"]
+    noise_scale = float(config.get("flow", {}).get("noise_scale", 1.0))
+    if num_steps is None or num_steps <= 0:
+        num_steps = int(config.get("inference", {}).get("num_steps", 32))
+    tokens = batch[3]
+    lengths = batch[4]
+    durations = batch[9]
+    padding_mask = lengths_to_padding_mask(lengths, max_len=tokens.shape[1])
+
+    def sample():
+        pred = euler_sample(
+            style_predictor["model"],
+            tokens,
+            lengths,
+            padding_mask,
+            style_dim=style_predictor["style_dim"],
+            durations=durations,
+            num_steps=num_steps,
+            noise_scale=noise_scale,
+        )
+        return denormalize_stylecode(pred, style_predictor["style_mean"], style_predictor["style_std"])
+
+    if seed is None:
+        return sample()
+    cuda_devices = [tokens.device.index if tokens.device.index is not None else torch.cuda.current_device()] if tokens.is_cuda else []
+    with torch.random.fork_rng(devices=cuda_devices, enabled=True):
+        torch.manual_seed(seed)
+        if tokens.is_cuda:
+            torch.cuda.manual_seed_all(seed)
+        return sample()
+
+
+def sample_with_gt_duration(model, batch, style_predictor=None, style_predictor_steps=None, style_predictor_seed=None):
+    stylecode_override = predict_stylecode(style_predictor, batch, style_predictor_steps, style_predictor_seed)
+    use_gt_stylecode = stylecode_override is None
     return model(
         speakers=batch[2],
         texts=batch[3],
         src_lens=batch[4],
         max_src_len=batch[5],
-        mels=batch[6],
-        mel_lens=batch[7],
+        mels=batch[6] if use_gt_stylecode else None,
+        mel_lens=batch[7] if use_gt_stylecode else None,
         max_mel_len=batch[8],
         d_targets=batch[9],
         force_sampling=True,
+        stylecode_override=stylecode_override,
     )
 
 
@@ -205,6 +313,10 @@ def evaluate_combination(
     output_dir,
     save_samples,
     vocoder,
+    vocoder_infer_fn,
+    style_predictor=None,
+    style_predictor_steps=None,
+    style_predictor_seed=None,
 ):
     preprocess_config, model_config, train_config = configs
     set_seed(seed)
@@ -231,10 +343,18 @@ def evaluate_combination(
 
     model.eval()
     with torch.inference_mode():
+        batch_index = 0
         for batchs in loader:
             for batch in batchs:
                 batch = to_device(batch, device)
-                output = sample_with_gt_duration(model, batch)
+                output = sample_with_gt_duration(
+                    model,
+                    batch,
+                    style_predictor=style_predictor,
+                    style_predictor_steps=style_predictor_steps,
+                    style_predictor_seed=style_predictor_batch_seed(style_predictor_seed, batch_index),
+                )
+                batch_index += 1
                 mel_predictions = output[0]
                 mel_targets = batch[6][:, : mel_predictions.shape[1], :]
                 mel_lens = batch[7]
@@ -257,6 +377,7 @@ def evaluate_combination(
                             vocoder,
                             model_config,
                             preprocess_config,
+                            vocoder_infer_fn,
                         )
                         saved_count += 1
                     evaluated_count += 1
@@ -267,6 +388,7 @@ def evaluate_combination(
         "sample_steps": sample_steps,
         "seed": seed,
         "num_samples": evaluated_count,
+        "stylecode_source": "predicted" if style_predictor is not None else "gt_reference",
         "sample_dir": sample_dir if saved_count > 0 else "",
     }
     for key, values in metrics.items():
@@ -288,6 +410,8 @@ def load_configs(args):
 
 
 def run(args):
+    from utils.model import get_model, get_vocoder, move_vocoder, vocoder_infer
+
     ensure_dir(args.output_dir)
     base_configs = load_configs(args)
     preprocess_config, model_config, base_train_config = base_configs
@@ -298,6 +422,10 @@ def run(args):
     vocoder = None
     if args.save_wav:
         vocoder = get_vocoder(model_config, device)
+
+    style_predictor = load_style_predictor(args.style_predictor_checkpoint, args.style_predictor_dir, device)
+    if style_predictor is not None:
+        print("Loaded StyleCodePredictor checkpoint: {}".format(args.style_predictor_checkpoint))
 
     rows = []
     for restore_step in args.restore_steps:
@@ -320,6 +448,10 @@ def run(args):
                     args.output_dir,
                     args.save_samples,
                     vocoder,
+                    vocoder_infer,
+                    style_predictor=style_predictor,
+                    style_predictor_steps=args.style_predictor_steps,
+                    style_predictor_seed=args.style_predictor_seed,
                 )
                 rows.append(row)
                 print(
@@ -346,7 +478,10 @@ def run(args):
             "best_by_score": best,
             "score_formula": "mel_l1_mean + 0.1 * mel_std_abs_diff_mean",
             "ranking_note": "Automatic mel metrics are for candidate selection; final choice should be confirmed by listening to generated samples.",
-            "evaluation_protocol": "GT duration validation-set sampling; duration predictor error is intentionally excluded.",
+            "evaluation_protocol": evaluation_protocol(args.style_predictor_checkpoint),
+            "style_predictor_checkpoint": args.style_predictor_checkpoint,
+            "style_predictor_steps": args.style_predictor_steps,
+            "style_predictor_seed": args.style_predictor_seed,
         },
     )
     print("Best automatic combination:")
@@ -379,6 +514,16 @@ def self_test():
     assert abs(score_row(row) - 0.52) < 1e-6
     assert split_ints("1,2,3") == [1, 2, 3]
     assert split_floats("1,1.5") == [1.0, 1.5]
+    mask = lengths_to_padding_mask(torch.tensor([2, 3]), 4)
+    assert mask.tolist() == [[False, False, True, True], [False, False, False, True]]
+    stylecode = torch.ones(1, 2, 3)
+    style_mean = torch.tensor([1.0, 2.0, 3.0])
+    style_std = torch.tensor([2.0, 2.0, 2.0])
+    denormalized = denormalize_stylecode(stylecode, style_mean, style_std)
+    assert denormalized[0, 0].tolist() == [3.0, 4.0, 5.0]
+    assert "predicted stylecode" in evaluation_protocol("predictor.pt")
+    assert "GT/reference stylecode" in evaluation_protocol("")
+    assert style_predictor_batch_seed(1234, 2) == 1236
     print("evaluate_flow_mel self_test ok")
 
 
@@ -392,6 +537,10 @@ def parse_args():
     parser.add_argument("--save_samples", type=int, default=10)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--save_wav", action="store_true", help="Save generated/GT wavs with the configured vocoder")
+    parser.add_argument("--style_predictor_checkpoint", type=str, default="", help="Optional StyleCodePredictor checkpoint; if set, predicted stylecode replaces GT/reference stylecode")
+    parser.add_argument("--style_predictor_dir", type=str, default="", help="Path to StyleCodePredictor package root; defaults to ../StyleCodePredictor")
+    parser.add_argument("--style_predictor_steps", type=int, default=0, help="Euler steps for StyleCodePredictor; 0 uses checkpoint config")
+    parser.add_argument("--style_predictor_seed", type=int, default=1234, help="Seed for StyleCodePredictor sampling")
     parser.add_argument("--output_dir", type=str, default="")
     parser.add_argument("-p", "--preprocess_config", type=str, default="")
     parser.add_argument("-m", "--model_config", type=str, default="")
