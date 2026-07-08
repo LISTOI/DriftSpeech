@@ -13,7 +13,10 @@ class FastSpeech2Loss(nn.Module):
         loss_config = model_config.get("loss", {})
         adversarial_config = model_config.get("phoneme_style", {}).get("adversarial", {})
         self.duration_weight = loss_config.get("duration_weight", 1.0)
-        self.flow_mel_weight = loss_config.get("flow_mel_weight", 1.0)
+        if model_config.get("mel_backend") == "drift":
+            self.flow_mel_weight = loss_config.get("drift_mel_weight", loss_config.get("flow_mel_weight", 1.0))
+        else:
+            self.flow_mel_weight = loss_config.get("flow_mel_weight", 1.0)
         self.adv_enabled = adversarial_config.get("enabled", False)
         self.adv_weight = adversarial_config.get("weight", 0.0)
         self.mse_loss = nn.MSELoss()
@@ -30,7 +33,7 @@ class FastSpeech2Loss(nn.Module):
             mel_masks,
             _,
             _,
-            _,
+            backend_info,
         ) = predictions[:9]
         style_adv_logits = predictions[9] if len(predictions) > 9 else None
         style_info = predictions[10] if len(predictions) > 10 else None
@@ -42,7 +45,10 @@ class FastSpeech2Loss(nn.Module):
         log_duration_predictions = log_duration_predictions.masked_select(valid_src_masks)
         log_duration_targets = log_duration_targets.masked_select(valid_src_masks)
 
-        flow_mel_loss = masked_flow_matching_loss(v_pred, v_target, padding_mask=mel_masks)
+        if isinstance(backend_info, dict) and backend_info.get("backend") == "drift":
+            flow_mel_loss = backend_info["mel_loss"]
+        else:
+            flow_mel_loss = masked_flow_matching_loss(v_pred, v_target, padding_mask=mel_masks)
         duration_loss = self.mse_loss(log_duration_predictions, log_duration_targets)
 
         phoneme_adv_loss = flow_mel_loss.new_zeros(())

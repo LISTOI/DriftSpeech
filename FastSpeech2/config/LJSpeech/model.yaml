@@ -34,6 +34,8 @@ phoneme_style:
     commitment_weight: 0.25
     codebook_weight: 1.0
 
+mel_backend: drift
+
 mel_flow:
   enabled: true
   hidden_dim: 256
@@ -52,9 +54,36 @@ mel_flow:
     null_condition: learned
     guidance_scale: 1.5
 
+mel_drift:
+  enabled: true
+  hidden_dim: 256
+  depth: 6
+  num_heads: 4
+  dropout: 0.1
+  conv_smoother_layers: 4
+  conv_smoother_kernel_size: 7
+  conv_smoother_expansion: 4
+  alpha_embed_dim: 256
+  noise_scale: 1.0
+  alpha_min: 1.0
+  alpha_max: 3.0
+  temperatures: [0.02, 0.05, 0.2]
+  max_tokens_per_utterance: 128
+  feature_mode: mel_frame
+  cfg:
+    enabled: true
+    condition_dropout: 0.1
+    null_condition: learned
+    guidance_scale: 1.5
+  anchor:
+    enabled: true
+    type: l1
+    weight: 0.05
+
 loss:
   duration_weight: 1.0
   flow_mel_weight: 1.0
+  drift_mel_weight: 1.0
 
 # gst:
 #   use_gst: False

@@ -110,6 +110,12 @@ def evaluation_protocol(style_predictor_checkpoint):
     return "GT duration validation-set sampling with GT/reference stylecode extracted from ground-truth mel; duration predictor error is intentionally excluded."
 
 
+def set_mel_sampling_config(train_config, guidance_scale, sample_steps):
+    for key in ("mel_drift", "mel_flow"):
+        train_config.setdefault(key, {})["guidance_scale"] = guidance_scale
+        train_config.setdefault(key, {})["sample_steps"] = sample_steps
+
+
 def style_predictor_batch_seed(base_seed, batch_index):
     if base_seed is None:
         return None
@@ -320,8 +326,7 @@ def evaluate_combination(
 ):
     preprocess_config, model_config, train_config = configs
     set_seed(seed)
-    train_config.setdefault("mel_flow", {})["guidance_scale"] = guidance_scale
-    train_config.setdefault("mel_flow", {})["sample_steps"] = sample_steps
+    set_mel_sampling_config(train_config, guidance_scale, sample_steps)
     if hasattr(model, "set_train_config"):
         model.set_train_config(train_config)
 
@@ -523,6 +528,12 @@ def self_test():
     assert denormalized[0, 0].tolist() == [3.0, 4.0, 5.0]
     assert "predicted stylecode" in evaluation_protocol("predictor.pt")
     assert "GT/reference stylecode" in evaluation_protocol("")
+    train_config = {}
+    set_mel_sampling_config(train_config, 1.5, 1)
+    assert train_config["mel_drift"]["guidance_scale"] == 1.5
+    assert train_config["mel_drift"]["sample_steps"] == 1
+    assert train_config["mel_flow"]["guidance_scale"] == 1.5
+    assert train_config["mel_flow"]["sample_steps"] == 1
     assert style_predictor_batch_seed(1234, 2) == 1236
     print("evaluate_flow_mel self_test ok")
 
@@ -532,7 +543,7 @@ def parse_args():
     parser.add_argument("--self_test", action="store_true", help="Run helper-function self test and exit")
     parser.add_argument("--restore_steps", type=split_ints, default=[], help="Comma-separated checkpoint steps, e.g. 100000,200000")
     parser.add_argument("--guidance_scales", type=split_floats, default=split_floats("1.0,1.5,2.0"))
-    parser.add_argument("--sample_steps", type=split_ints, default=split_ints("16,32,64"))
+    parser.add_argument("--sample_steps", type=split_ints, default=split_ints("1"))
     parser.add_argument("--max_samples", type=int, default=50)
     parser.add_argument("--save_samples", type=int, default=10)
     parser.add_argument("--seed", type=int, default=1234)

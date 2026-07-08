@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from transformer import Encoder
+from .drift_mel import MelDriftGenerator
 from .mel_flow import FrameConditionSmoother, MelFlowGenerator
 from .modules import DurationPredictor, LengthRegulator
 from .style_extractor import PhonemeStyleExtractor
@@ -19,10 +20,15 @@ class FastSpeech2(nn.Module):
         self.model_config = model_config
         self.train_config = None
         transformer_config = model_config["transformer"]
+        self.mel_backend = model_config.get("mel_backend", "flow")
         mel_flow_config = model_config.get("mel_flow", {})
-        hidden_dim = mel_flow_config.get("hidden_dim", transformer_config["encoder_hidden"])
+        mel_drift_config = model_config.get("mel_drift", {})
+        backend_config = mel_drift_config if self.mel_backend == "drift" else mel_flow_config
+        hidden_dim = backend_config.get("hidden_dim", transformer_config["encoder_hidden"])
         if hidden_dim != transformer_config["encoder_hidden"]:
-            raise ValueError("mel_flow.hidden_dim must match transformer.encoder_hidden in this branch")
+            raise ValueError("{}.hidden_dim must match transformer.encoder_hidden in this branch".format(
+                "mel_drift" if self.mel_backend == "drift" else "mel_flow"
+            ))
 
         self.encoder = Encoder(model_config)
         self.duration_predictor = DurationPredictor(model_config)
@@ -30,16 +36,26 @@ class FastSpeech2(nn.Module):
         self.length_regulator = LengthRegulator()
         self.condition_smoother = FrameConditionSmoother(
             hidden_dim,
-            layers=mel_flow_config.get("conv_smoother_layers", 4),
-            kernel_size=mel_flow_config.get("conv_smoother_kernel_size", 7),
-            dropout=mel_flow_config.get("dropout", 0.1),
-            expansion=mel_flow_config.get("conv_smoother_expansion", 4),
+            layers=backend_config.get("conv_smoother_layers", mel_flow_config.get("conv_smoother_layers", 4)),
+            kernel_size=backend_config.get("conv_smoother_kernel_size", mel_flow_config.get("conv_smoother_kernel_size", 7)),
+            dropout=backend_config.get("dropout", mel_flow_config.get("dropout", 0.1)),
+            expansion=backend_config.get("conv_smoother_expansion", mel_flow_config.get("conv_smoother_expansion", 4)),
         )
-        self.mel_flow = MelFlowGenerator(
-            preprocess_config["preprocessing"]["mel"]["n_mel_channels"],
-            hidden_dim,
-            mel_flow_config,
-        )
+        mel_dim = preprocess_config["preprocessing"]["mel"]["n_mel_channels"]
+        if self.mel_backend == "flow":
+            self.mel_flow = MelFlowGenerator(
+                mel_dim,
+                hidden_dim,
+                mel_flow_config,
+            )
+        elif self.mel_backend == "drift":
+            self.mel_flow = MelDriftGenerator(
+                mel_dim,
+                hidden_dim,
+                mel_drift_config,
+            )
+        else:
+            raise ValueError("Unsupported mel_backend: {}".format(self.mel_backend))
 
         self.speaker_emb = None
         if model_config["multi_speaker"]:
@@ -161,14 +177,19 @@ class FastSpeech2(nn.Module):
                 frame_condition,
                 padding_mask=mel_masks,
             )
-            mel_predictions = mel_targets + v_pred - v_target
+            if self.mel_backend == "drift":
+                mel_predictions = v_pred
+            else:
+                mel_predictions = mel_targets + v_pred - v_target
             mel_predictions = mel_predictions.masked_fill(mel_masks.unsqueeze(-1), 0.0)
         else:
             sample_steps = 32
             guidance_scale = None
             if self.train_config is not None:
-                sample_steps = self.train_config.get("mel_flow", {}).get("sample_steps", sample_steps)
-                guidance_scale = self.train_config.get("mel_flow", {}).get("guidance_scale", guidance_scale)
+                sample_config = self.train_config.get("mel_drift", {}) if self.mel_backend == "drift" else {}
+                flow_sample_config = self.train_config.get("mel_flow", {})
+                sample_steps = sample_config.get("sample_steps", flow_sample_config.get("sample_steps", sample_steps))
+                guidance_scale = sample_config.get("guidance_scale", flow_sample_config.get("guidance_scale", guidance_scale))
             mel_predictions = self.mel_flow.euler_sample(
                 frame_condition,
                 padding_mask=mel_masks,
@@ -177,7 +198,12 @@ class FastSpeech2(nn.Module):
             )
             v_pred = mel_predictions
             v_target = torch.zeros_like(v_pred)
-            flow_info = {}
+            flow_info = {
+                "backend": self.mel_backend,
+                "sample_steps": 1 if self.mel_backend == "drift" else sample_steps,
+                "requested_sample_steps": sample_steps,
+                "guidance_scale": guidance_scale,
+            }
 
         return (
             mel_predictions,

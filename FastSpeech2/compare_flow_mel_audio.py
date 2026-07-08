@@ -211,8 +211,9 @@ def run(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     model_args = argparse.Namespace(restore_step=args.restore_step)
     train_config = deepcopy(train_config)
-    train_config.setdefault("mel_flow", {})["sample_steps"] = args.sample_steps
-    train_config.setdefault("mel_flow", {})["guidance_scale"] = args.guidance_scale
+    for key in ("mel_drift", "mel_flow"):
+        train_config.setdefault(key, {})["sample_steps"] = args.sample_steps
+        train_config.setdefault(key, {})["guidance_scale"] = args.guidance_scale
     configs = (preprocess_config, model_config, train_config)
     model = get_model(model_args, configs, device, train=False).to(device)
     if hasattr(model, "set_train_config"):

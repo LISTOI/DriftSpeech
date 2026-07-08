@@ -70,3 +70,5 @@ Thumbs.db
 
 # Claude local state
 .claude/
+
+offline_utmos/
